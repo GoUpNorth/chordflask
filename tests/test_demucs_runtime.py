@@ -79,3 +79,17 @@ def test_runtime_environment_keeps_cache_outside_repository(monkeypatch, tmp_pat
     assert env["TORCH_HOME"] == str(cache)
     assert env["XDG_CACHE_HOME"] == str(cache)
     assert cache.is_dir()
+
+
+def test_runtime_environment_overrides_user_hugging_face_cache(monkeypatch, tmp_path):
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("CHORDFLASK_DEMUCS_CACHE", str(cache))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "user-hf"))
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "user-hub"))
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path / "legacy-hub"))
+
+    env = runtime.environment()
+
+    assert env["HF_HOME"] == str(cache / "huggingface")
+    assert "HF_HUB_CACHE" not in env
+    assert "HUGGINGFACE_HUB_CACHE" not in env
