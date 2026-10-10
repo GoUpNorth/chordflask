@@ -3787,6 +3787,7 @@
       const rate = effectivePlaybackSpeed();
       applyMasterPlaybackSpeed(rate);
       if (graphStemsActive()) retimeStemGraph(rate);
+      if (stemEngine === 'elements') applyStemElementRates();
       updateSpeedUI();
     }
 
@@ -4963,7 +4964,7 @@
     function wireStemLifecycle(el, name) {
       const setStarved = (value) => {
         stemStarved[name] = value;
-        if (value) el.playbackRate = 1;
+        if (value) el.playbackRate = stemElementRate();
       };
       el.addEventListener('waiting', () => setStarved(true));
       el.addEventListener('stalled', () => setStarved(true));
@@ -5319,9 +5320,7 @@
         // Re-read the advancing master after loading. Stems that were already
         // started are silent, so seeking them cannot expose stale audio.
         const target = master.currentTime;
-        for (const name of STEM_NAMES) {
-          stemPlayers[name].playbackRate = 1;
-        }
+        applyStemElementRates();
         await Promise.all(
           STEM_NAMES.map(name => stemSeekSettled(stemPlayers[name], target, true))
         );
@@ -5417,7 +5416,7 @@
       for (const name of STEM_NAMES) {
         const el = stemPlayers[name];
         if (!el) continue;
-        el.playbackRate = 1;
+        el.playbackRate = stemElementRate();
         el.currentTime = target;
       }
     }
@@ -5444,6 +5443,15 @@
       if (Math.abs(drift) > STEM_GRAPH_RESYNC_DRIFT) startStemGraph();
     }
 
+    // Element stems keep pitch natively; drift correction nudges around the chosen speed.
+    function stemElementRate(delta = 0) {
+      return effectivePlaybackSpeed() * (1 + delta);
+    }
+
+    function applyStemElementRates() {
+      for (const el of Object.values(stemPlayers)) el.playbackRate = stemElementRate();
+    }
+
     function stemDriftCheck() {
       if (!stemsActive) return;
       const master = video;
@@ -5453,6 +5461,7 @@
         return;
       }
       const target = master.currentTime;
+      const rate = stemElementRate();
       for (const name of STEM_NAMES) {
         const el = stemPlayers[name];
         if (!el) continue;
@@ -5460,7 +5469,7 @@
         // Let a stem that is seeking or starved for data recover on its own;
         // do not repeatedly hard-seek it while it is already stalled.
         if (el.paused || el.seeking || stemStarved[name] || el.readyState < 2) {
-          if (el.playbackRate !== 1) el.playbackRate = 1;
+          if (el.playbackRate !== rate) el.playbackRate = rate;
           continue;
         }
 
@@ -5468,7 +5477,7 @@
         const abs = Math.abs(drift);
 
         if (abs <= STEM_IGNORE_DRIFT) {
-          if (el.playbackRate !== 1) el.playbackRate = 1;
+          if (el.playbackRate !== rate) el.playbackRate = rate;
           continue;
         }
 
@@ -5477,11 +5486,11 @@
             -STEM_MAX_RATE_DELTA,
             Math.min(STEM_MAX_RATE_DELTA, drift * STEM_RATE_FACTOR)
           );
-          el.playbackRate = 1 + delta;
+          el.playbackRate = stemElementRate(delta);
           continue;
         }
 
-        el.playbackRate = 1;
+        el.playbackRate = rate;
         el.currentTime = target;
       }
     }

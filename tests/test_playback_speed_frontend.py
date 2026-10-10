@@ -280,3 +280,57 @@ loadStemStretch({}).then(ok => {
 
 def test_stretch_module_load_never_throws():
     run_speed_script(STRETCH_LOAD, functions=['loadStemStretch'])
+
+
+ELEMENTS_PRELUDE = PRELUDE + r'''
+const STEM_NAMES = ['vocals'];
+const STEM_IGNORE_DRIFT = 0.030;
+const STEM_SOFT_DRIFT_MAX = 0.120;
+const STEM_MAX_RATE_DELTA = 0.03;
+const STEM_RATE_FACTOR = 0.25;
+stemsActive = true;
+stemEngine = 'elements';
+playbackSpeed = 0.5;
+let stemStarved = {};
+const video = { paused: false, currentTime: 10 };
+const el = { paused: false, seeking: false, readyState: 4, currentTime: 10, playbackRate: 1 };
+const stemPlayers = { vocals: el };
+function stemGraphDriftCheck() { throw new Error('graph path not expected'); }
+'''
+
+ELEMENTS_DRIFT = r'''
+el.currentTime = 9.99;
+stemDriftCheck();
+assert(el.playbackRate === 0.5, 'small drift keeps the chosen speed: ' + el.playbackRate);
+el.currentTime = 9.92;
+stemDriftCheck();
+near(el.playbackRate, 0.5 * (1 + 0.08 * 0.25), 'soft correction scales the chosen speed');
+el.currentTime = 9.5;
+stemDriftCheck();
+assert(el.playbackRate === 0.5 && el.currentTime === 10, 'hard resync at the chosen speed');
+'''
+
+
+def test_element_stems_follow_playback_speed():
+    run_speed_script(
+        ELEMENTS_DRIFT,
+        functions=['stemDriftCheck', 'stemElementRate', 'effectivePlaybackSpeed', 'speedControlLocked',
+                   'graphStemsActive'],
+        prelude=ELEMENTS_PRELUDE,
+    )
+
+
+ELEMENTS_SEEK = r'''
+video.currentTime = 30;
+stemMasterSeeked();
+assert(el.playbackRate === 0.5 && el.currentTime === 30, 'seek keeps the chosen speed');
+'''
+
+
+def test_element_stems_keep_speed_on_seek():
+    run_speed_script(
+        ELEMENTS_SEEK,
+        functions=['stemMasterSeeked', 'stemElementRate', 'effectivePlaybackSpeed', 'speedControlLocked',
+                   'graphStemsActive'],
+        prelude=ELEMENTS_PRELUDE,
+    )
