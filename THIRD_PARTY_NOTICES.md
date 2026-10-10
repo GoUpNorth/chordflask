@@ -107,6 +107,20 @@ in rasterized PDF leadsheets.
 - **Full license:** `chordflask/assets/fonts/LICENSE.txt` in the source tree and
   `LIBERATION-FONTS-LICENSE.txt` in the standalone archive
 
+## SoundTouchJS
+
+ChordFlask bundles the SoundTouchJS AudioWorklet processor from
+`@soundtouchjs/audio-worklet` 2.1.1. The browser uses it only to keep the pitch
+of Demucs stems unchanged while playback is slowed. The processor file and its
+license notice are shipped unmodified at `chordflask/static/vendor/soundtouch/`.
+
+- **License:** Mozilla Public License 2.0 (MPL-2.0); full text at
+  https://mozilla.org/MPL/2.0/
+- **Copyright:** Olli Parviainen, Ryan Berdeen, Jakub Fiala,
+  Steve 'Cutter' Blades
+- **Upstream source:** https://github.com/cutterbl/SoundTouchJS
+  (`packages/audio-worklet`)
+
 ## Python Dependencies
 
 Python runtime dependencies are listed in `requirements-core.txt` and

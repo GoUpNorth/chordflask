@@ -103,6 +103,7 @@ pyinstaller \
     --exclude-module=chordflask.helpers.chordleadsheet_batch \
     --add-data "${PROJECT_ROOT}/chordflask/templates:chordflask/templates" \
     --add-data "${PROJECT_ROOT}/chordflask/assets:chordflask/assets" \
+    --add-data "${PROJECT_ROOT}/chordflask/static:chordflask/static" \
     "${PROJECT_ROOT}/chordflask/__main__.py"
 
 archive_listing="$(pyi-archive_viewer -l "${SCRIPT_DIR}/dist/chordflask")"
