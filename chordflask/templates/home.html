@@ -2991,6 +2991,14 @@
     let stemGains = {};
     let stemSources = {};
     let stemGraphAnchor = null;
+    // SoundTouch keeps slowed stems at their pitch. AudioWorklet needs a secure
+    // context (localhost or HTTPS), so the stretcher can be unavailable.
+    const STEM_STRETCH_PROCESSOR_URL = '/static/vendor/soundtouch/soundtouch-processor.js';
+    let stemStretchAvailable = false;
+    let stemStretchLoad = null;
+    let stemStretchNode = null;
+    let stemStretchLatencies = {};
+    const stemStretchMeasuring = new Set();
     let stemFetchController = null;
     let stemsAvailable = false;
     let stemsActive = false;
@@ -3763,7 +3771,7 @@
     }
 
     function effectivePlaybackSpeed() {
-      return playbackSpeed;
+      return speedControlLocked() ? 1 : playbackSpeed;
     }
 
     // preservesPitch keeps the key; defaultPlaybackRate survives source changes.
@@ -3776,12 +3784,19 @@
     }
 
     function applyPlaybackSpeed() {
-      applyMasterPlaybackSpeed(effectivePlaybackSpeed());
+      const rate = effectivePlaybackSpeed();
+      applyMasterPlaybackSpeed(rate);
+      if (graphStemsActive()) retimeStemGraph(rate);
       updateSpeedUI();
     }
 
+    // Graph stems cannot be slowed without the stretcher, so they stay at full speed.
     function speedControlLocked() {
-      return false;
+      return graphStemsActive() && !stemStretchAvailable;
+    }
+
+    function graphStemsActive() {
+      return stemsActive && stemEngine === 'graph';
     }
 
     function formatBpmStatus(bpm, speed) {
@@ -3795,7 +3810,11 @@
       speedChip.textContent = percent + '%';
       speedChip.classList.toggle('speed-slowed', speed < 1);
       speedSlider.value = String(percent);
-      speedSlider.disabled = speedControlLocked();
+      const locked = speedControlLocked();
+      speedSlider.disabled = locked;
+      speedChip.title = locked
+        ? 'Slowed stem playback needs localhost or HTTPS; turn stems off to change speed'
+        : 'Playback speed';
       bpmStatus.innerText = formatBpmStatus(currentBpm, speed);
     }
 
@@ -4556,6 +4575,7 @@
       for (const name of STEM_NAMES) {
         if (stemGains[name]) stemGains[name].disconnect();
       }
+      dropStemStretchNode();
       stemGains = {};
       // Dropping the buffers releases the decoded audio.
       stemBuffers = {};
@@ -4575,6 +4595,7 @@
       if (wasActive) {
         video.muted = stemWasMasterMuted;
       }
+      applyPlaybackSpeed();
     }
 
     function resetStemsForSongChange() {
@@ -5066,8 +5087,12 @@
     // Media position currently audible from the graph, comparable to master.currentTime.
     function stemGraphPosition() {
       if (!stemAudioContext || !stemGraphAnchor) return null;
-      const anchor = stemGraphAnchor;
-      return anchor.offset + (stemAudioContext.currentTime - anchor.when) - anchor.latency;
+      return stemGraphFedPosition(stemGraphAnchor, stemAudioContext.currentTime - stemGraphAnchor.latency);
+    }
+
+    // Media position the sources are feeding at audio-clock time `at`.
+    function stemGraphFedPosition(anchor, at) {
+      return anchor.offset + (at - anchor.when) * anchor.rate;
     }
 
     function stopStemGraphSources() {
@@ -5091,21 +5116,125 @@
       const master = video;
       if (!ctx || !stemBuffers[STEM_NAMES[0]] || isNaN(master.currentTime)) return;
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-      const latency = (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
+      const rate = effectivePlaybackSpeed();
+      connectStemGraphOutput(ctx, rate);
+      const stretchLatency = stemStretchNode ? stemStretchLatency(rate) : 0;
+      const latency = (ctx.baseLatency || 0) + (ctx.outputLatency || 0) + stretchLatency;
       const when = ctx.currentTime + STEM_GRAPH_START_LEAD;
       // A sample scheduled at `when` is heard `latency` later; start at the
       // position the master will show at that moment.
-      const offset = master.currentTime + STEM_GRAPH_START_LEAD + latency;
+      const offset = master.currentTime + (STEM_GRAPH_START_LEAD + latency) * rate;
       if (offset >= stemBuffers[STEM_NAMES[0]].duration) return;
       // One start time and one offset for every stem keeps them sample-aligned.
       for (const name of STEM_NAMES) {
         const source = ctx.createBufferSource();
         source.buffer = stemBuffers[name];
+        source.playbackRate.value = rate;
         source.connect(stemGains[name]);
         source.start(when, offset);
         stemSources[name] = source;
       }
-      stemGraphAnchor = { when, offset, latency };
+      stemGraphAnchor = { when, offset, latency, rate };
+      if (stemStretchNode) measureStemStretchLatency(rate);
+    }
+
+    function dropStemStretchNode() {
+      if (!stemStretchNode) return;
+      stemStretchNode.disconnect();
+      stemStretchNode = null;
+    }
+
+    // Below full speed every gain feeds one stretcher, so stems stay sample-aligned.
+    // A fresh stretcher per start drops audio buffered from the previous position.
+    function connectStemGraphOutput(ctx, rate) {
+      for (const name of STEM_NAMES) stemGains[name].disconnect();
+      dropStemStretchNode();
+      let output = ctx.destination;
+      if (rate < 1 && stemStretchAvailable) {
+        stemStretchNode = new AudioWorkletNode(ctx, 'soundtouch-processor', { outputChannelCount: [2] });
+        stemStretchNode.parameters.get('playbackRate').value = rate;
+        stemStretchNode.connect(ctx.destination);
+        output = stemStretchNode;
+      }
+      for (const name of STEM_NAMES) stemGains[name].connect(output);
+    }
+
+    function stemStretchLatency(rate) {
+      const rates = Object.keys(stemStretchLatencies).map(Number);
+      if (!rates.length) return 0;
+      const nearest = rates.reduce((best, candidate) => (
+        Math.abs(candidate - rate) < Math.abs(best - rate) ? candidate : best
+      ));
+      return Math.max(0, stemStretchLatencies[nearest]);
+    }
+
+    // Changes speed without restarting. Audio already in flight keeps the old
+    // rate; the drift check resyncs if that offset grows too large.
+    function retimeStemGraph(rate) {
+      const anchor = stemGraphAnchor;
+      if (!anchor) return;
+      if ((rate < 1) !== (anchor.rate < 1)) {
+        startStemGraph();
+        return;
+      }
+      const at = stemAudioContext.currentTime;
+      stemGraphAnchor = { when: at, offset: stemGraphFedPosition(anchor, at), latency: anchor.latency, rate };
+      for (const source of Object.values(stemSources)) source.playbackRate.setValueAtTime(rate, at);
+      if (stemStretchNode) {
+        stemStretchNode.parameters.get('playbackRate').setValueAtTime(rate, at);
+        measureStemStretchLatency(rate);
+      }
+    }
+
+    function loadStemStretch(ctx) {
+      if (!stemStretchLoad) {
+        stemStretchLoad = ctx.audioWorklet
+          ? ctx.audioWorklet.addModule(STEM_STRETCH_PROCESSOR_URL).then(() => true, () => false)
+          : Promise.resolve(false);
+      }
+      return stemStretchLoad;
+    }
+
+    // Renders a short tone burst through the stretcher offline and records how
+    // much later than its scheduled time it is heard, once per rate.
+    async function measureStemStretchLatency(rate) {
+      if (rate in stemStretchLatencies || stemStretchMeasuring.has(rate)) return;
+      stemStretchMeasuring.add(rate);
+      const sampleRate = 44100;
+      const burstAt = 1.0;
+      try {
+        const offline = new OfflineAudioContext(2, sampleRate * 3, sampleRate);
+        await offline.audioWorklet.addModule(STEM_STRETCH_PROCESSOR_URL);
+        const buffer = offline.createBuffer(2, sampleRate * 3, sampleRate);
+        const start = Math.round(sampleRate * burstAt);
+        for (let channel = 0; channel < 2; channel += 1) {
+          const data = buffer.getChannelData(channel);
+          for (let i = 0; i < sampleRate * 0.02; i += 1) {
+            data[start + i] = 0.8 * Math.sin(2 * Math.PI * 1000 * i / sampleRate);
+          }
+        }
+        const source = offline.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = rate;
+        const node = new AudioWorkletNode(offline, 'soundtouch-processor', { outputChannelCount: [2] });
+        node.parameters.get('playbackRate').value = rate;
+        source.connect(node);
+        node.connect(offline.destination);
+        source.start(0);
+        const output = (await offline.startRendering()).getChannelData(0);
+        const peak = output.reduce((max, sample) => Math.max(max, Math.abs(sample)), 0);
+        const first = output.findIndex(sample => Math.abs(sample) > peak * 0.2);
+        if (peak > 0 && first >= 0) {
+          stemStretchLatencies[rate] = first / sampleRate - burstAt / rate;
+        } else {
+          console.warn('Stem stretch latency measurement found no signal');
+        }
+      } catch (error) {
+        console.warn('Stem stretch latency measurement failed', error);
+      }
+      // The drift check covers an unknown latency; do not retry on every start.
+      if (!(rate in stemStretchLatencies)) stemStretchLatencies[rate] = 0;
+      stemStretchMeasuring.delete(rate);
     }
 
     async function activateStemGraph(token) {
@@ -5113,6 +5242,7 @@
       const ctx = stemGraphContext();
       // Resume inside the STEMS click so the browser allows audio output.
       const resumed = ctx.resume();
+      const stretchLoaded = loadStemStretch(ctx);
       stemEngine = 'graph';
       const controller = new AbortController();
       stemFetchController = controller;
@@ -5121,6 +5251,7 @@
           STEM_NAMES.map(name => fetchStemBuffer(ctx, name, controller.signal))
         );
         await resumed;
+        stemStretchAvailable = await stretchLoaded;
         if (token !== stemsActivationToken) return;
         stemFetchController = null;
         STEM_NAMES.forEach((name, index) => {
@@ -5132,6 +5263,7 @@
         });
         master.muted = true;
         stemsActive = true;
+        applyPlaybackSpeed();
         if (!master.paused && !master.ended) startStemGraph();
         updateStemsUI();
       } catch (error) {

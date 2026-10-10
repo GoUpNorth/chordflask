@@ -13,11 +13,19 @@ GRAPH_FUNCTIONS = [
     'stemGraphGain',
     'applyStemGain',
     'stemGraphPosition',
+    'stemGraphFedPosition',
     'stopStemGraphSources',
     'startStemGraph',
     'stemMasterPlaying',
     'stemMasterInterrupted',
     'stemGraphDriftCheck',
+    'connectStemGraphOutput',
+    'dropStemStretchNode',
+    'stemStretchLatency',
+    'retimeStemGraph',
+    'effectivePlaybackSpeed',
+    'speedControlLocked',
+    'graphStemsActive',
 ]
 
 
@@ -55,19 +63,38 @@ let stemSources = {};
 let stemGraphAnchor = null;
 let stemStates = { vocals: true, drums: true, bass: true, other: true };
 let stemVolumes = { vocals: 1.0, drums: 0.5, bass: 1.0, other: 1.0 };
+let playbackSpeed = 1;
+let stemStretchAvailable = false;
+let stemStretchNode = null;
+let stemStretchLatencies = {};
+const measured = [];
+function measureStemStretchLatency(rate) { if (!(rate in stemStretchLatencies)) measured.push(rate); }
 const started = [];
+const worklets = [];
 class FakeSource {
+  constructor() { this.playbackRate = new FakeParam(); }
   connect(node) { this.output = node; }
   disconnect() { this.output = null; }
   start(when, offset) { this.when = when; this.offset = offset; started.push(this); }
   stop() { this.stopped = true; }
 }
 class FakeParam {
-  constructor() { this.value = 1; this.targets = []; }
+  constructor() { this.value = 1; this.targets = []; this.scheduled = []; }
   setTargetAtTime(value, time, constant) { this.targets.push([value, time, constant]); }
+  setValueAtTime(value, time) { this.value = value; this.scheduled.push([value, time]); }
+}
+class AudioWorkletNode {
+  constructor(context, name, options) {
+    this.name = name; this.options = options; this.params = { playbackRate: new FakeParam() };
+    this.parameters = { get: key => this.params[key] };
+    worklets.push(this);
+  }
+  connect(node) { this.output = node; }
+  disconnect() { this.disconnected = true; this.output = null; }
 }
 const stemAudioContext = {
   currentTime: 10, baseLatency: 0.01, outputLatency: 0.02, state: 'running',
+  destination: { name: 'destination' },
   createBufferSource() { return new FakeSource(); },
   resume() { return Promise.resolve(); },
 };
@@ -75,7 +102,11 @@ const window = { AudioContext: function () {} };
 let video = { currentTime: 42, paused: false, ended: false, seeking: false, readyState: 4, duration: 300 };
 for (const name of STEM_NAMES) {
   stemBuffers[name] = { duration: 300 };
-  stemGains[name] = { name, gain: new FakeParam() };
+  stemGains[name] = {
+    name, gain: new FakeParam(),
+    connect(node) { this.output = node; },
+    disconnect() { this.output = null; },
+  };
 }
 ''' + functions + '\n' + body
 
