@@ -48,7 +48,7 @@ fi
 
 "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
 "${VENV_DIR}/bin/pip" install --quiet \
-    "torch==2.10.0" "torchaudio==2.10.0" \
+    "torch==2.10.0" \
     --index-url "${TORCH_INDEX_URL}" || \
     fail "Could not install the pinned Torch 2.10.0 runtime"
 "${VENV_DIR}/bin/pip" install --quiet --requirement "${REQUIREMENTS}" || \

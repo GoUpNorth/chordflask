@@ -64,7 +64,7 @@ def test_setup_installs_pins_even_in_existing_venv(demucs_setup, version, existi
     assert result.returncode == 0, result.stderr
     assert calls.startswith("['-']\n")
     assert ("'-m', 'venv'" in calls) == (not existing)
-    torch_install = "'torch==2.10.0', 'torchaudio==2.10.0', '--index-url', 'https://download.pytorch.org/whl/cu128'"
+    torch_install = "['install', '--quiet', 'torch==2.10.0', '--index-url', 'https://download.pytorch.org/whl/cu128']"
     requirements_install = f"'--requirement', {str(ROOT / 'chordflask_demucs/requirements.txt')!r}"
     assert torch_install in calls
     assert requirements_install in calls
@@ -86,8 +86,8 @@ def test_unsupported_python_fails_before_install(demucs_setup, version, existing
     assert venv.exists() == existing
 
 
-def test_runtime_requirements_include_audio_save_backend():
+def test_runtime_requirements_pin_inference_only_set():
     requirements = (ROOT / "chordflask_demucs/requirements.txt").read_text()
     assert {line for line in requirements.splitlines() if line and not line.startswith('#')} == {
-        "demucs==4.0.1", "torch==2.10.0", "torchaudio==2.10.0", "torchcodec==0.10.0",
+        "demucs==4.1.0", "torch==2.10.0", "sphn==0.2.1", "numpy==2.5.3",
     }

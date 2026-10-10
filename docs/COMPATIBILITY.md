@@ -86,8 +86,7 @@ change the core Python validation policy above.
 
 Demucs uses the same separate Python 3.12–3.14 policy as BTC, with one setup
 across Mint 22.x, Ubuntu 24.04, Debian 13, and Ubuntu/Xubuntu 26.04. It pins
-Demucs 4.0.1, Torch and torchaudio 2.10.0 (cu128), and TorchCodec 0.10.0 for
-audio saving. See the [Demucs runtime matrix and validation
+Demucs 4.1.0, Torch 2.10.0 (cu128), and sphn 0.2.1 for audio decoding. See the [Demucs runtime matrix and validation
 record](DEMUCS.md#runtime-compatibility) for interpreter overrides, existing-venv
 upgrades, and remaining warnings. Core runtime dependencies are unchanged.
 

@@ -69,28 +69,39 @@ Setup uses one dependency set across the target Linux x86_64 systems:
 | Debian 13 | 3.13 |
 | Ubuntu/Xubuntu 26.04 | 3.14 |
 
-The isolated runtime pins `demucs==4.0.1`, `torch==2.10.0`,
-`torchaudio==2.10.0`, and `torchcodec==0.10.0`. Torch and torchaudio use
-`https://download.pytorch.org/whl/cu128` by default. TorchCodec supplies the
-audio-saving backend required by torchaudio 2.10.
+The isolated runtime pins `demucs==4.1.0`, `torch==2.10.0`, `sphn==0.2.1`,
+and `numpy==2.5.3` (Demucs imports numpy without declaring it on Linux).
+Torch uses `https://download.pytorch.org/whl/cu128` by default. Demucs 4.1 no
+longer uses torchaudio or TorchCodec for inference: it decodes audio with sphn
+and writes the WAV stems that ChordFlask converts to FLAC with ffmpeg.
+
+Pretrained models are fetched from the Hugging Face hub into
+`<model cache>/huggingface`. ChordFlask sets `HF_HOME` for the Demucs process
+and ignores any `HF_HUB_CACHE` in the shell, so models never land in a personal
+Hugging Face cache. Demucs 4.0.1 kept its model under `<model cache>/hub`;
+after upgrading, the model is downloaded once more (about 80 MB) on the first
+processing run, and the old `<model cache>/hub` directory can be deleted.
 
 Setup defaults to `python3`; set `CHORDFLASK_DEMUCS_PYTHON` to select another
 interpreter. Python 3.12, 3.13, and 3.14 are accepted; other versions fail
 before venv creation or package installation with override guidance. An
 existing venv is checked using its own Python. If that interpreter is outside
 the supported range, choose a new `CHORDFLASK_DEMUCS_VENV` path and a supported
-Python. Existing supported venvs with torch/torchaudio 2.6 upgrade in place
-when setup is rerun; no manual deletion is needed.
+Python. Existing supported venvs upgrade in place when setup is rerun; no
+manual deletion is needed. Leftover openunmix, torchaudio, and TorchCodec
+packages from earlier setups are unused; remove them together with
+`pip uninstall openunmix torchaudio torchcodec` in the Demucs venv. Because the Demucs version is part of
+the pipeline fingerprint, stem sets created with Demucs 4.0.1 report `STALE`
+after the upgrade until they are regenerated.
 
-The maintainer manually verified this dependency set on Xubuntu 26.04,
-Python 3.14.4, and an RTX 5070 Laptop: installation completed without dependency
-conflicts, torchaudio imported, the Demucs help command worked, and a real
-20-second `htdemucs` CUDA separation completed with TorchCodec installed.
-Warnings about `encoding` and `bits_per_sample` not being fully/directly
-supported by TorchCodec remained but did not prevent that run from completing.
-This does not establish end-to-end validation across every target system.
-CUDA requires a compatible GPU and driver; automatic CPU fallback and model
-download on first processing remain unchanged.
+The maintainer manually verified the earlier Demucs 4.0.1 dependency set on
+Xubuntu 26.04, Python 3.14.4, and an RTX 5070 Laptop, including a real
+20-second `htdemucs` CUDA separation. The Demucs 4.1.0 set was verified on
+Ubuntu 24.04 (WSL2), Python 3.12.3, and CUDA: setup and `make demucs-check`
+passed, and a 20-second `chordflask-demucs` run published all four FLAC stems,
+which matched Demucs 4.0.1 output within normal run-to-run variation. It is not
+validated end to end on every target system.
+CUDA requires a compatible GPU and driver; CPU fallback is automatic.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md#optional-demucs-runtime) for how this
 optional environment relates to the supported core Python/platform matrix.

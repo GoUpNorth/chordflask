@@ -1,5 +1,6 @@
 # Optional runtime only. Never install this file into the normal ChordFlask venv.
-demucs==4.0.1
+demucs==4.1.0
 torch==2.10.0
-torchaudio==2.10.0
-torchcodec==0.10.0
+sphn==0.2.1
+# Demucs 4.1.0 imports numpy but declares it only for Intel macOS.
+numpy==2.5.3

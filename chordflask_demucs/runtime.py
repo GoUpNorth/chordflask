@@ -131,6 +131,10 @@ def environment() -> dict[str, str]:
     env = clean_environment()
     env["TORCH_HOME"] = str(model_cache)
     env["XDG_CACHE_HOME"] = str(model_cache)
+    env["HF_HOME"] = str(model_cache / "huggingface")
+    # Either hub-cache variable would take precedence over HF_HOME.
+    env.pop("HF_HUB_CACHE", None)
+    env.pop("HUGGINGFACE_HUB_CACHE", None)
     return env
 
 
