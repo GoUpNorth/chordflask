@@ -6333,6 +6333,15 @@
       fallbackActiveIndex = beat.index;
     }
 
+    // Project to the point at which the browser will paint the response.
+    // This replaces the historical fixed 0.4 s anticipation with measured
+    // local round-trip latency, bounded so a temporary stall cannot jump bars.
+    // The lead is wall-clock time; media advances at the playback speed.
+    function positionSyncDisplayLead() {
+      if (video.paused || isLooping) return 0;
+      return Math.min(pollingLeadSeconds + estimatedRoundTripSeconds, 0.25) * effectivePlaybackSpeed();
+    }
+
     function syncPlaybackPosition(force = false) {
       if (isNaN(video.currentTime)) {
         return;
@@ -6366,12 +6375,7 @@
         () => controller.abort(),
         positionSyncTimeoutMs
       );
-      // Project to the point at which the browser will paint the response.
-      // This replaces the historical fixed 0.4 s anticipation with measured
-      // local round-trip latency, bounded so a temporary stall cannot jump bars.
-      const displayLead = video.paused || isLooping
-        ? 0
-        : Math.min(pollingLeadSeconds + estimatedRoundTripSeconds, 0.25);
+      const displayLead = positionSyncDisplayLead();
       const position = video.currentTime + displayLead;
       const cachedBeats = playbackFallbackData?.beats || [];
       const beatCacheThrough = cachedBeats.length

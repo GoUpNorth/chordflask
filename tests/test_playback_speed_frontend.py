@@ -31,6 +31,8 @@ const videoPlayer = fakePlayer();
 const audioPlayer = fakePlayer();
 '''
 
+SPEED_RATE_FUNCTIONS = ['effectivePlaybackSpeed', 'speedControlLocked', 'graphStemsActive']
+
 SPEED_FUNCTIONS = [
     'normalizePlaybackSpeed',
     'readStoredObject',
@@ -314,8 +316,7 @@ assert(el.playbackRate === 0.5 && el.currentTime === 10, 'hard resync at the cho
 def test_element_stems_follow_playback_speed():
     run_speed_script(
         ELEMENTS_DRIFT,
-        functions=['stemDriftCheck', 'stemElementRate', 'effectivePlaybackSpeed', 'speedControlLocked',
-                   'graphStemsActive'],
+        functions=['stemDriftCheck', 'stemElementRate', *SPEED_RATE_FUNCTIONS],
         prelude=ELEMENTS_PRELUDE,
     )
 
@@ -330,7 +331,33 @@ assert(el.playbackRate === 0.5 && el.currentTime === 30, 'seek keeps the chosen 
 def test_element_stems_keep_speed_on_seek():
     run_speed_script(
         ELEMENTS_SEEK,
-        functions=['stemMasterSeeked', 'stemElementRate', 'effectivePlaybackSpeed', 'speedControlLocked',
-                   'graphStemsActive'],
+        functions=['stemMasterSeeked', 'stemElementRate', *SPEED_RATE_FUNCTIONS],
         prelude=ELEMENTS_PRELUDE,
+    )
+
+
+DISPLAY_LEAD = r'''
+let pollingLeadSeconds = 0.1;
+let estimatedRoundTripSeconds = 0.05;
+let isLooping = false;
+const video = { paused: false };
+playbackSpeed = 1;
+near(positionSyncDisplayLead(), 0.15, 'full speed lead');
+playbackSpeed = 0.5;
+near(positionSyncDisplayLead(), 0.075, 'lead is media time at half speed');
+video.paused = true;
+assert(positionSyncDisplayLead() === 0, 'paused');
+video.paused = false;
+isLooping = true;
+assert(positionSyncDisplayLead() === 0, 'looping');
+isLooping = false;
+estimatedRoundTripSeconds = 1;
+near(positionSyncDisplayLead(), 0.125, 'cap applies before scaling');
+'''
+
+
+def test_grid_display_lead_is_scaled_by_speed():
+    run_speed_script(
+        DISPLAY_LEAD,
+        functions=['positionSyncDisplayLead', *SPEED_RATE_FUNCTIONS],
     )
