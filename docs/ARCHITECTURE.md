@@ -281,7 +281,7 @@ state coordination, not authentication or hardened multi-user isolation.
 | Concern | Main location |
 | --- | --- |
 | Web application, routes, startup | `chordflask/app.py` |
-| Browser template and package assets | `chordflask/templates/`, `chordflask/assets/` |
+| Browser template and package assets | `chordflask/templates/`, `chordflask/assets/`, `chordflask/static/` |
 | Playback and per-client state | `chordflask/mp4playerflask.py`, `chordflask/playbackview.py`, `chordflask/client_state.py` |
 | Analysis queue and worker | `chordflask/analysis_queue.py`, `chordflask/analysis_worker.py` |
 | Chordino/QM analysis pipeline | `chordflask/chordanalyzer.py`, `chordflask/analysis_service.py`, `chordflask/audio_analyzer.py` |

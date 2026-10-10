@@ -22,6 +22,7 @@ sync while the music plays.
 - Correct chords manually and keep those edits across reanalysis
 - Keep per-song notes and observations in the desktop [Journal](JOURNAL.md)
 - Transpose and export chord sheets
+- Slow playback to 50–100% for practice without changing pitch
 - Optionally generate and play synchronized stems
 - Keep media and analysis completely local
 

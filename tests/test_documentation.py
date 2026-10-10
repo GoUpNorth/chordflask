@@ -332,3 +332,13 @@ def test_no_primary_recommendation_for_backend_commands():
         text = doc.read_text()
         assert "chordflask-analyze-btc" not in text, doc
         assert "chordflask-migrate-schema" not in text, doc
+
+
+def test_docs_describe_playback_speed():
+    readme = (REPO_ROOT / "README.md").read_text()
+    analysis = (REPO_ROOT / "docs" / "ANALYSIS.md").read_text()
+    demucs = (REPO_ROOT / "docs" / "DEMUCS.md").read_text()
+    assert "50–100% speed" in readme
+    assert "**Speed**" in analysis and "BPM: 129 → 90" in analysis
+    for needle in ("SoundTouch", "HTTPS", "held at\n100%"):
+        assert needle in demucs

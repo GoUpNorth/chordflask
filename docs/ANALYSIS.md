@@ -175,6 +175,10 @@ scanned recursively.
   Loop, Repeat, and Auto are mutually exclusive.
 - **Transpose** changes displayed chord names without changing the audio or
   stored analysis.
+- **Speed** (the percentage next to Transpose) opens a slider that slows
+  playback to 50–100% in 5% steps without changing pitch, for practising at a
+  lower tempo. It applies to stems too, is remembered per song, and the BPM
+  readout shows the effective tempo, for example `BPM: 129 → 90`.
 - **Reanalyze** requests fresh Chordino/QM analysis while playback and
   browsing remain available.
 - On desktop (1024 px and wider), drag the divider between media and chords to
