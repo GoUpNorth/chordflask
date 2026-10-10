@@ -45,6 +45,7 @@ chordflask = [
     "templates/*.html",
     "assets/fonts/*.ttf",
     "assets/fonts/LICENSE.txt",
+    "static/vendor/*/*",
 ]
 
 [tool.ruff]

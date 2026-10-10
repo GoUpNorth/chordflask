@@ -38,7 +38,7 @@ responsive design does not imply feature parity with desktop.
 
 ChordFlask is designed for exploring a music collection and playing along with whatever catches your interest. Browse your own audio and video directories, open a song, and let ChordFlask analyze it when you need it. You do not have to prepare the whole collection first: analyze one song spontaneously, queue several from the browser, or prepare an entire directory from the command line. Completed analyses stay with the collection and are reused the next time you return.
 
-During playback, the detected chords and beats follow the song in the browser. This makes it easy to pick up an instrument, improvise, or work out a part without first searching for a separate chord sheet. Transpose the displayed chords, set an A/B loop around a difficult passage, or correct individual chords while keeping the original analyzer result available.
+During playback, the detected chords and beats follow the song in the browser. This makes it easy to pick up an instrument, improvise, or work out a part without first searching for a separate chord sheet. Transpose the displayed chords, slow playback down to practise (50–100% speed, pitch unchanged), set an A/B loop around a difficult passage, or correct individual chords while keeping the original analyzer result available.
 
 The Grid uses equal-width beat cells, larger chord labels, subtle beat lines,
 and stronger boundaries at supplied downbeats. Empty and repeated beats stay
@@ -70,6 +70,7 @@ At a glance, ChordFlask lets you:
 - analyze one song, a browser batch, or an entire directory;
 - follow detected chords and beats during playback;
 - transpose chords, repeat difficult passages with A/B loops, and correct detected chords;
+- slow playback to 50–100% speed without changing pitch, stems included;
 - add synchronized lyrics from LRC, embedded metadata, or LRCLIB;
 - keep per-song notes and observations in the Journal;
 - prepare Demucs stems for karaoke and instrument practice; and

@@ -967,8 +967,10 @@ def test_index_stem_drift_correction_is_stall_aware_and_two_level():
     # Two-level correction: soft rate adjustment bounded, hard seek only for
     # clearly large drift.
     assert "const STEM_MAX_RATE_DELTA = 0.03" in body
-    assert "el.playbackRate = 1 + delta;" in body
-    assert "el.playbackRate = 1;" in body
+    # Both levels correct around the chosen playback speed, not a fixed rate.
+    assert "return effectivePlaybackSpeed() * (1 + delta);" in body
+    assert "el.playbackRate = stemElementRate(delta);" in body
+    assert "el.playbackRate = rate;" in body
     assert "el.currentTime = target;" in body
     assert "function wireStemLifecycle(el, name)" in body
     assert "function stemSeekSettled(el, target, setCurrentTime = false)" in body

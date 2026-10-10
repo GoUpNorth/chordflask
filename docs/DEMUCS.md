@@ -238,6 +238,15 @@ re-tested before changing it.
 Stem loading failure safely returns to the original audio and restores the
 original master mute state.
 
+The playback **Speed** control ([player controls](ANALYSIS.md)) also applies
+to stems. Slowed Web Audio stems pass through one bundled SoundTouch
+AudioWorklet after the per-stem volumes, so they keep their pitch and stay
+sample-aligned; at 100% it is bypassed. Browsers allow AudioWorklet only on
+`localhost` or HTTPS pages, so on a plain-HTTP LAN address the speed is held at
+100% while STEMS is on and the slider is disabled; turning STEMS off restores
+the chosen speed. The separate-element engine uses the browser's own
+pitch-preserving playback.
+
 Chordino can also analyze a single stem, for example **Other**, and store the
 result as a separate chord track that follows the original timeline. Use
 **Prepare → Stem chords** on desktop or `chordflask-analyze --source other`.
