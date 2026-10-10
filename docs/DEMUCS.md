@@ -205,7 +205,19 @@ in the chord header. For ordinary songs the control is hidden.
   layouts never offer the Prepare group. Other available external-runtime
   actions may share the group, while directory preparation remains a CLI workflow.
 
-Individual stem OFF intentionally uses an effectively silent nonzero gain
+For media up to 15 minutes, STEMS downloads and decodes all four stems into
+one Web Audio context and starts them with the same start time and offset, so
+they stay sample-aligned with each other. Separate media elements each keep
+their own clock; browser measurements showed stems drifting 5–30 ms apart,
+which is audible. The whole stem group follows the muted original player,
+compensating the audio output latency, and is restarted together only when it
+drifts more than 60 ms from it. Decoded stems use about 90 MB of memory per
+minute of media while STEMS is on; the memory is released when STEMS is turned
+off or the song changes.
+
+Longer media, or a browser that cannot decode the stems, uses the earlier
+separate-element engine with bounded per-stem drift correction. In that engine
+individual stem OFF intentionally uses an effectively silent nonzero gain
 instead of browser mute or exact-zero volume. Real Chromium playback timing
 tests found that fully silent media elements could remain playing and ready
 while their clocks diverged from the other stems. This is deliberate
@@ -258,8 +270,12 @@ behavior, including with `--stem-cache`. Current evidence points to a separate
 mobile browser media-pipeline, buffering, or scheduling limitation; the stem
 mute/synchronization fix does not address it.
 
-- Browser playback uses bounded synchronization, not sample-accurate DAW
-  playback. Audible sync should be checked on real devices.
+- Stems are sample-aligned with each other only on the Web Audio engine (media
+  up to 15 minutes). Longer media uses bounded synchronization, not
+  sample-accurate DAW playback. Audible sync should be checked on real devices.
+- The Web Audio engine downloads all four stems before STEMS turns on, so
+  activation takes longer than with streamed playback. STEMS pulses while it
+  loads; clicking it again cancels the load and stops the downloads.
 - Demucs quality depends on the source and the music.
 - Demucs never runs automatically; the desktop **Prepare** control is the only
   on-demand trigger.

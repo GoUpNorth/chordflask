@@ -1329,6 +1329,17 @@
       color: #fff;
     }
 
+    #stemsButton.stem-loading {
+      border-color: #1b7a43;
+      color: #fff;
+      animation: stem-loading-pulse 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes stem-loading-pulse {
+      from { background: transparent; }
+      to { background: #1b7a43; }
+    }
+
     .stem-toggles {
       display: flex;
       align-items: center;
@@ -2919,6 +2930,22 @@
     // while preserving the normal nonzero-gain clock. This is intentional sync
     // behavior; do not use muted=true or volume=0 without browser timing tests.
     const STEM_SILENT_VOLUME = Number.EPSILON;
+    // Separate media elements keep separate clocks, so stems drifted apart by
+    // 5–30 ms. The graph engine decodes every stem into one AudioContext and
+    // starts all sources with the same start time and offset, which keeps them
+    // sample-aligned. Decoded audio costs ~90 MB per minute for four stereo
+    // stems, so longer media keeps using the separate-element engine.
+    const STEM_GRAPH_MAX_SECONDS = 15 * 60;
+    const STEM_GRAPH_START_LEAD = 0.05;
+    const STEM_GRAPH_RESYNC_DRIFT = 0.060;
+    const STEM_GRAPH_GAIN_TIME_CONSTANT = 0.01;
+    let stemEngine = null;
+    let stemAudioContext = null;
+    let stemBuffers = {};
+    let stemGains = {};
+    let stemSources = {};
+    let stemGraphAnchor = null;
+    let stemFetchController = null;
     let stemsAvailable = false;
     let stemsActive = false;
     let stemStates = { vocals: true, drums: true, bass: true, other: true };
@@ -4280,10 +4307,21 @@
         : STEM_SILENT_VOLUME;
     }
 
+    // An engine is chosen while stems still download, decode, or align.
+    function stemsLoading() {
+      return stemEngine !== null && !stemsActive;
+    }
+
     function updateStemsUI() {
+      const loading = stemsLoading();
       stemsButton.hidden = !stemsAvailable;
       stemsButton.classList.toggle('stem-on', stemsActive);
+      stemsButton.classList.toggle('stem-loading', loading);
       stemsButton.setAttribute('aria-pressed', String(stemsActive));
+      stemsButton.setAttribute('aria-busy', String(loading));
+      stemsButton.title = loading
+        ? 'Loading stems; click to cancel'
+        : 'Enable or disable stem playback';
       stemTogglesRow.hidden = !stemsActive;
       for (const name of STEM_NAMES) {
         const chip = stemChipEl(name);
@@ -4325,6 +4363,7 @@
       stemVolumes[stemMixerStem] = level;
       const el = stemPlayers[stemMixerStem];
       if (el) el.volume = stemOutputVolume(stemMixerStem);
+      applyStemGain(stemMixerStem);
       updateStemsUI();
     }
 
@@ -4353,12 +4392,31 @@
       stemStarved = {};
     }
 
+    function clearStemGraph() {
+      if (stemFetchController) {
+        stemFetchController.abort();
+        stemFetchController = null;
+      }
+      stopStemGraphSources();
+      for (const name of STEM_NAMES) {
+        if (stemGains[name]) stemGains[name].disconnect();
+      }
+      stemGains = {};
+      // Dropping the buffers releases the decoded audio.
+      stemBuffers = {};
+      if (stemAudioContext && stemAudioContext.state === 'running') {
+        stemAudioContext.suspend().catch(() => {});
+      }
+    }
+
     function teardownStems() {
       const wasActive = stemsActive;
       stemsActive = false;
       stemsActivationToken += 1;
       stemMixerStem = null;
+      stemEngine = null;
       clearStemPlayers();
+      clearStemGraph();
       if (wasActive) {
         video.muted = stemWasMasterMuted;
       }
@@ -4751,13 +4809,150 @@
       });
     }
 
-    async function activateStems() {
+    function stemGraphSupported(master) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      return Boolean(AudioContextClass)
+        && Number.isFinite(master.duration)
+        && master.duration > 0
+        && master.duration <= STEM_GRAPH_MAX_SECONDS;
+    }
+
+    function stemGraphContext() {
+      if (!stemAudioContext) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        try {
+          // Matching the stem rate avoids resampling while decoding.
+          stemAudioContext = new AudioContextClass({ sampleRate: 44100 });
+        } catch (error) {
+          stemAudioContext = new AudioContextClass();
+        }
+      }
+      return stemAudioContext;
+    }
+
+    function stemStreamUrl(name) {
+      const version = stemVersions && stemVersions[name];
+      return '/stem/' + name + (version ? ('?v=' + version) : ('?' + new Date().getTime()));
+    }
+
+    async function fetchStemBuffer(ctx, name, signal) {
+      const response = await fetch(stemStreamUrl(name), { signal });
+      if (!response.ok) throw new Error('Stem media failed to load');
+      const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+      // Callback-only decoders (old WebKit) resolve nothing; use separate players.
+      if (!buffer) throw new Error('Stem decoding is unavailable');
+      return buffer;
+    }
+
+    function stemGraphGain(name) {
+      return stemStates[name] ? stemVolumes[name] : 0;
+    }
+
+    function applyStemGain(name) {
+      const gain = stemGains[name];
+      if (!gain) return;
+      gain.gain.setTargetAtTime(
+        stemGraphGain(name), stemAudioContext.currentTime, STEM_GRAPH_GAIN_TIME_CONSTANT
+      );
+    }
+
+    // Media position currently audible from the graph, comparable to master.currentTime.
+    function stemGraphPosition() {
+      if (!stemAudioContext || !stemGraphAnchor) return null;
+      const anchor = stemGraphAnchor;
+      return anchor.offset + (stemAudioContext.currentTime - anchor.when) - anchor.latency;
+    }
+
+    function stopStemGraphSources() {
+      for (const name of STEM_NAMES) {
+        const source = stemSources[name];
+        if (!source) continue;
+        try {
+          source.stop();
+        } catch (error) {
+          // A source that already ended cannot be stopped again.
+        }
+        source.disconnect();
+      }
+      stemSources = {};
+      stemGraphAnchor = null;
+    }
+
+    function startStemGraph() {
+      stopStemGraphSources();
+      const ctx = stemAudioContext;
+      const master = video;
+      if (!ctx || !stemBuffers[STEM_NAMES[0]] || isNaN(master.currentTime)) return;
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      const latency = (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
+      const when = ctx.currentTime + STEM_GRAPH_START_LEAD;
+      // A sample scheduled at `when` is heard `latency` later; start at the
+      // position the master will show at that moment.
+      const offset = master.currentTime + STEM_GRAPH_START_LEAD + latency;
+      if (offset >= stemBuffers[STEM_NAMES[0]].duration) return;
+      // One start time and one offset for every stem keeps them sample-aligned.
+      for (const name of STEM_NAMES) {
+        const source = ctx.createBufferSource();
+        source.buffer = stemBuffers[name];
+        source.connect(stemGains[name]);
+        source.start(when, offset);
+        stemSources[name] = source;
+      }
+      stemGraphAnchor = { when, offset, latency };
+    }
+
+    async function activateStemGraph(token) {
+      const master = video;
+      const ctx = stemGraphContext();
+      // Resume inside the STEMS click so the browser allows audio output.
+      const resumed = ctx.resume();
+      stemEngine = 'graph';
+      const controller = new AbortController();
+      stemFetchController = controller;
+      try {
+        const buffers = await Promise.all(
+          STEM_NAMES.map(name => fetchStemBuffer(ctx, name, controller.signal))
+        );
+        await resumed;
+        if (token !== stemsActivationToken) return;
+        stemFetchController = null;
+        STEM_NAMES.forEach((name, index) => {
+          const gain = ctx.createGain();
+          gain.gain.value = stemGraphGain(name);
+          gain.connect(ctx.destination);
+          stemGains[name] = gain;
+          stemBuffers[name] = buffers[index];
+        });
+        master.muted = true;
+        stemsActive = true;
+        if (!master.paused && !master.ended) startStemGraph();
+        updateStemsUI();
+      } catch (error) {
+        if (token !== stemsActivationToken) return;
+        clearStemGraph();
+        // Decoding can fail when memory is short; separate players still work.
+        activateStemElements(token);
+      }
+    }
+
+    function activateStems() {
       if (stemsActive || !stemsAvailable) return;
       const token = stemsActivationToken + 1;
       stemsActivationToken = token;
       const master = video;
       if (isNaN(master.currentTime)) return;
       stemWasMasterMuted = master.muted;
+      if (stemGraphSupported(master)) {
+        activateStemGraph(token);
+      } else {
+        activateStemElements(token);
+      }
+      updateStemsUI();
+    }
+
+    async function activateStemElements(token) {
+      const master = video;
+      stemEngine = 'elements';
       const shouldPlay = !master.paused && !master.ended;
 
       for (const name of STEM_NAMES) {
@@ -4769,8 +4964,7 @@
         el.muted = true;
         el.volume = stemOutputVolume(name);
         wireStemLifecycle(el, name);
-        const version = stemVersions && stemVersions[name];
-        el.src = '/stem/' + name + (version ? ('?v=' + version) : ('?' + new Date().getTime()));
+        el.src = stemStreamUrl(name);
         stemPlayers[name] = el;
         document.body.appendChild(el);
       }
@@ -4827,7 +5021,8 @@
     }
 
     function toggleStems() {
-      if (stemsActive) {
+      // A click while stems load cancels instead of starting a second load.
+      if (stemsActive || stemsLoading()) {
         teardownStems();
         updateStemsUI();
       } else {
@@ -4845,6 +5040,7 @@
         el.muted = false;
         el.volume = stemOutputVolume(name);
       }
+      applyStemGain(name);
       updateStemsUI();
     }
 
@@ -4852,6 +5048,11 @@
       if (!stemsActive) return;
       const master = video;
       const shouldPlay = !master.paused && !master.ended;
+      if (stemEngine === 'graph') {
+        // The graph starts on 'playing', once the master is really advancing.
+        if (!shouldPlay) stopStemGraphSources();
+        return;
+      }
       if (shouldPlay) {
         const token = stemsActivationToken;
         playStemPlayers(token, true).catch(() => stemLoadFailure(token));
@@ -4869,6 +5070,10 @@
       if (!stemsActive) return;
       const master = video;
       if (isNaN(master.currentTime)) return;
+      if (stemEngine === 'graph') {
+        if (!master.paused && !master.ended) startStemGraph();
+        return;
+      }
       const target = master.currentTime;
       for (const name of STEM_NAMES) {
         const el = stemPlayers[name];
@@ -4878,10 +5083,36 @@
       }
     }
 
+    function stemMasterPlaying(event) {
+      if (!stemsActive || stemEngine !== 'graph' || event.target !== video) return;
+      if (!stemGraphAnchor) startStemGraph();
+    }
+
+    // Seeking or buffering freezes the master; silence the graph until it moves.
+    function stemMasterInterrupted(event) {
+      if (!stemsActive || stemEngine !== 'graph' || event.target !== video) return;
+      stopStemGraphSources();
+    }
+
+    function stemGraphDriftCheck(master) {
+      if (!stemGraphAnchor) {
+        if (!master.seeking && master.readyState >= 3) startStemGraph();
+        return;
+      }
+      // Stems share one clock; only the graph as a whole can drift from the
+      // master, so resync all sources together.
+      const drift = master.currentTime - stemGraphPosition();
+      if (Math.abs(drift) > STEM_GRAPH_RESYNC_DRIFT) startStemGraph();
+    }
+
     function stemDriftCheck() {
       if (!stemsActive) return;
       const master = video;
       if (master.paused || isNaN(master.currentTime)) return;
+      if (stemEngine === 'graph') {
+        stemGraphDriftCheck(master);
+        return;
+      }
       const target = master.currentTime;
       for (const name of STEM_NAMES) {
         const el = stemPlayers[name];
@@ -5875,6 +6106,9 @@
     [videoPlayer, audioPlayer].forEach(player => {
       player.addEventListener('play', stemMasterChanged);
       player.addEventListener('pause', stemMasterChanged);
+      player.addEventListener('playing', stemMasterPlaying);
+      player.addEventListener('waiting', stemMasterInterrupted);
+      player.addEventListener('seeking', stemMasterInterrupted);
       player.addEventListener('seeked', stemMasterSeeked);
     });
     setInterval(stemDriftCheck, STEM_DRIFT_INTERVAL_MS);

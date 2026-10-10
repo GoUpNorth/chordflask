@@ -1034,9 +1034,11 @@ def test_index_stem_activation_preserves_play_intent_across_source_readiness():
     _, client = make_client()
 
     body = client.get("/").get_data(as_text=True)
-    activation = javascript_function(body, "activateStems")
+    activation = javascript_function(body, "activateStemElements")
+    stream_url = javascript_function(body, "stemStreamUrl")
 
-    assert "const version = stemVersions && stemVersions[name];" in activation
+    assert "const version = stemVersions && stemVersions[name];" in stream_url
+    assert "el.src = stemStreamUrl(name);" in activation
     assert "el.volume = stemOutputVolume(name);" in activation
     assert "el.muted = true;" in activation
     assert "const startPromise = shouldPlay ? playStemPlayers(token)" in activation
@@ -1054,7 +1056,7 @@ def test_index_stem_play_rejection_cannot_leave_active_ui_with_paused_stems():
     _, client = make_client()
 
     body = client.get("/").get_data(as_text=True)
-    activation = javascript_function(body, "activateStems")
+    activation = javascript_function(body, "activateStemElements")
     master_changed = javascript_function(body, "stemMasterChanged")
     failure = javascript_function(body, "stemLoadFailure")
 
