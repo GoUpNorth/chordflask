@@ -41,7 +41,7 @@ SPEED_FUNCTIONS = [
 ]
 
 
-def run_speed_script(body, functions=SPEED_FUNCTIONS, prelude=PRELUDE):
+def run_speed_script(body, functions=SPEED_FUNCTIONS, prelude=PRELUDE + 'function updateSpeedUI() {}\n'):
     template = TEMPLATE.read_text()
     source = '\n'.join(_function_source(template, name) for name in functions)
     run_node(prelude + source + '\n' + body)
@@ -84,3 +84,58 @@ assert(rememberedPlaybackSpeed('a.mp3') === 0.7, 'stored for the loaded song');
                          ids=['normalize', 'persistence', 'master-rate'])
 def test_playback_speed_state(body):
     run_speed_script(body)
+
+
+def test_speed_controls_are_a_50_to_100_percent_slider_without_reset():
+    template = TEMPLATE.read_text()
+    assert 'id="speedChip"' in template
+    assert 'id="speedPopover"' in template
+    at = template.index('id="speedSlider"')
+    slider = template[template.rindex('<input', 0, at):template.index('>', at)]
+    for attribute in ('type="range"', 'min="50"', 'max="100"', 'step="5"'):
+        assert attribute in slider
+    assert 'id="speedReset"' not in template
+
+
+UI_PRELUDE = PRELUDE + r'''
+function fakeElement() {
+  const classes = new Set();
+  return {
+    textContent: '', innerText: '', title: '', value: '', disabled: false, hidden: true,
+    classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },
+                 contains(name) { return classes.has(name); } },
+  };
+}
+const speedChip = fakeElement();
+const speedSlider = fakeElement();
+const speedPopover = fakeElement();
+const bpmStatus = fakeElement();
+let currentBpm = 129;
+function speedControlLocked() { return false; }
+'''
+
+UI_FUNCTIONS = SPEED_FUNCTIONS + ['formatBpmStatus', 'updateSpeedUI', 'onSpeedSliderInput']
+
+BPM_FORMAT = r'''
+assert(formatBpmStatus(129, 1) === 'BPM: 129', 'full speed');
+assert(formatBpmStatus(129, 0.7) === 'BPM: 129 → 90', 'slowed');
+assert(formatBpmStatus(null, 0.7) === 'BPM: --', 'unknown');
+'''
+
+CHIP = r'''
+setPlaybackSpeed(0.75);
+assert(speedChip.textContent === '75%', 'chip text ' + speedChip.textContent);
+assert(speedChip.classList.contains('speed-slowed'), 'slowed highlight');
+assert(speedSlider.value === '75', 'slider follows');
+assert(bpmStatus.innerText === 'BPM: 129 → 97', 'bpm readout ' + bpmStatus.innerText);
+speedSlider.value = '100';
+onSpeedSliderInput();
+assert(playbackSpeed === 1 && speedChip.textContent === '100%', 'slider input sets speed');
+assert(!speedChip.classList.contains('speed-slowed'), 'highlight off at full speed');
+assert(bpmStatus.innerText === 'BPM: 129', 'bpm at full speed');
+'''
+
+
+@pytest.mark.parametrize('body', [BPM_FORMAT, CHIP], ids=['bpm-format', 'chip'])
+def test_speed_ui(body):
+    run_speed_script(body, functions=UI_FUNCTIONS, prelude=UI_PRELUDE)

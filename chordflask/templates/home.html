@@ -1142,7 +1142,8 @@
       color: #fff;
     }
 
-    .display-tools button.display-on {
+    .display-tools button.display-on,
+    .display-tools button.speed-slowed {
       background: #1b7a43;
       border-color: #1b7a43;
       color: #fff;
@@ -1435,7 +1436,9 @@
       box-shadow: 0 0 0 1px #7fc4ff;
     }
 
-    .stem-mixer {
+    .stem-mixer,
+    .speed-control,
+    .speed-popover {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -1443,7 +1446,8 @@
       text-transform: none;
     }
 
-    .stem-mixer[hidden] {
+    .stem-mixer[hidden],
+    .speed-popover[hidden] {
       display: none;
     }
 
@@ -1460,7 +1464,8 @@
       font-variant-numeric: tabular-nums;
     }
 
-    #stemMixerSlider {
+    #stemMixerSlider,
+    #speedSlider {
       width: 120px;
       height: 20px;
       margin: 0;
@@ -2393,6 +2398,15 @@
                   <button type="button" onclick="stepSemitones(1)" aria-label="Transpose up"
                           title="Transpose up one semitone">+</button>
                 </span>
+                <span class="speed-control">
+                  <button id="speedChip" type="button" onclick="toggleSpeedPopover()"
+                          title="Playback speed" aria-label="Playback speed"
+                          aria-expanded="false">100%</button>
+                  <span class="speed-popover" id="speedPopover" hidden>
+                    <input type="range" id="speedSlider" min="50" max="100" step="5" value="100"
+                           oninput="onSpeedSliderInput()" aria-label="Playback speed" />
+                  </span>
+                </span>
                 <button id="repeatDisplayButton" data-grid-only type="button" onclick="toggleRepeatDisplay()"
                         title="Show every beat" aria-label="Show every beat" aria-pressed="true">Changes</button>
                 <button id="accidentalButton" type="button" onclick="toggleAccidentals()"
@@ -2843,6 +2857,9 @@
     let stemMixerLabel = document.getElementById('stemMixerLabel');
     let stemMixerValue = document.getElementById('stemMixerValue');
     let stemMixerSlider = document.getElementById('stemMixerSlider');
+    let speedChip = document.getElementById('speedChip');
+    let speedPopover = document.getElementById('speedPopover');
+    let speedSlider = document.getElementById('speedSlider');
     let chordDisplayControls = document.querySelector('.chord-display-controls');
     let chordActions = document.querySelector('.chord-actions');
     let prepareGroup = document.getElementById('prepareGroup');
@@ -2907,6 +2924,7 @@
     const PLAYBACK_SPEED_MAX = 1;
     const PLAYBACK_SPEED_STEP = 0.05;
     let playbackSpeed = 1;
+    let currentBpm = null;
     let desiredChordTrackId = localStorage.getItem(storageKeys.chordTrackId) || '';
     let desiredRhythmTrackId = localStorage.getItem(storageKeys.rhythmTrackId) || '';
     let activeChordTrackId = '';
@@ -3759,6 +3777,41 @@
 
     function applyPlaybackSpeed() {
       applyMasterPlaybackSpeed(effectivePlaybackSpeed());
+      updateSpeedUI();
+    }
+
+    function speedControlLocked() {
+      return false;
+    }
+
+    function formatBpmStatus(bpm, speed) {
+      if (!bpm) return 'BPM: --';
+      return speed === 1 ? `BPM: ${bpm}` : `BPM: ${bpm} → ${Math.round(bpm * speed)}`;
+    }
+
+    function updateSpeedUI() {
+      const speed = effectivePlaybackSpeed();
+      const percent = Math.round(speed * 100);
+      speedChip.textContent = percent + '%';
+      speedChip.classList.toggle('speed-slowed', speed < 1);
+      speedSlider.value = String(percent);
+      speedSlider.disabled = speedControlLocked();
+      bpmStatus.innerText = formatBpmStatus(currentBpm, speed);
+    }
+
+    function onSpeedSliderInput() {
+      setPlaybackSpeed(Number(speedSlider.value) / 100);
+    }
+
+    function setSpeedPopoverOpen(open, returnFocus = false) {
+      speedPopover.hidden = !open;
+      speedChip.setAttribute('aria-expanded', String(open));
+      if (open) speedSlider.focus();
+      else if (returnFocus) speedChip.focus();
+    }
+
+    function toggleSpeedPopover() {
+      setSpeedPopoverOpen(speedPopover.hidden);
     }
 
     function setPlaybackSpeed(value) {
@@ -6062,8 +6115,8 @@
 
     function renderCallbackData(dataDict) {
       const data = dataDict["callback_output"] || [];
-      const bpm = dataDict["bpm"];
-      bpmStatus.innerText = bpm ? `BPM: ${bpm}` : 'BPM: --';
+      currentBpm = dataDict["bpm"];
+      bpmStatus.innerText = formatBpmStatus(currentBpm, effectivePlaybackSpeed());
       if (dataDict.display_grid) {
         renderBeatGrid(dataDict.display_grid, dataDict.active_index);
       } else {
@@ -6279,6 +6332,9 @@
       if (event.key === 'Escape' && stemMixerStem) {
         closeStemMixer();
       }
+      if (event.key === 'Escape' && !speedPopover.hidden) {
+        setSpeedPopoverOpen(false, true);
+      }
     });
     document.addEventListener('click', event => {
       const target = event.target instanceof Element ? event.target : null;
@@ -6287,6 +6343,9 @@
       }
       if (!target || !target.closest('.prepare-control')) {
         setPrepareMenuOpen(false);
+      }
+      if (!speedPopover.hidden && (!target || !target.closest('.speed-control'))) {
+        setSpeedPopoverOpen(false);
       }
       if (!stemMixerStem) return;
       if (target && (target.closest('.stem-mixer') || target.closest('.stem-level'))) return;
