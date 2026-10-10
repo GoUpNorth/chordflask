@@ -2404,7 +2404,8 @@
                           aria-expanded="false">100%</button>
                   <span class="speed-popover" id="speedPopover" hidden>
                     <input type="range" id="speedSlider" min="50" max="100" step="5" value="100"
-                           oninput="onSpeedSliderInput()" aria-label="Playback speed" />
+                           oninput="onSpeedSliderInput()" onchange="onSpeedSliderChange()"
+                           aria-label="Playback speed" />
                   </span>
                 </span>
                 <button id="repeatDisplayButton" data-grid-only type="button" onclick="toggleRepeatDisplay()"
@@ -3823,6 +3824,20 @@
       setPlaybackSpeed(Number(speedSlider.value) / 100);
     }
 
+    // Live retiming leaves stems offset by in-flight audio; one restart on
+    // release realigns them.
+    function onSpeedSliderChange() {
+      restartStemGraphIfRunning();
+    }
+
+    // The browser's own speed menu changes the master directly; adopt it.
+    function onMasterRateChange(event) {
+      // Rate changes the app made itself already match the effective speed.
+      if (event.target !== video || video.playbackRate === effectivePlaybackSpeed()) return;
+      setPlaybackSpeed(video.playbackRate);
+      if (video.playbackRate !== effectivePlaybackSpeed()) applyPlaybackSpeed();
+    }
+
     function setSpeedPopoverOpen(open, returnFocus = false) {
       speedPopover.hidden = !open;
       speedChip.setAttribute('aria-expanded', String(open));
@@ -4576,7 +4591,6 @@
       for (const name of STEM_NAMES) {
         if (stemGains[name]) stemGains[name].disconnect();
       }
-      dropStemStretchNode();
       stemGains = {};
       // Dropping the buffers releases the decoded audio.
       stemBuffers = {};
@@ -5109,6 +5123,8 @@
       }
       stemSources = {};
       stemGraphAnchor = null;
+      // Audio buffered in the stretcher belongs to the old position.
+      dropStemStretchNode();
     }
 
     function startStemGraph() {
@@ -5117,8 +5133,9 @@
       const master = video;
       if (!ctx || !stemBuffers[STEM_NAMES[0]] || isNaN(master.currentTime)) return;
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      connectStemGraphOutput(ctx, effectivePlaybackSpeed());
+      // A stretcher that failed to start locks full speed.
       const rate = effectivePlaybackSpeed();
-      connectStemGraphOutput(ctx, rate);
       const stretchLatency = stemStretchNode ? stemStretchLatency(rate) : 0;
       const latency = (ctx.baseLatency || 0) + (ctx.outputLatency || 0) + stretchLatency;
       const when = ctx.currentTime + STEM_GRAPH_START_LEAD;
@@ -5139,6 +5156,24 @@
       if (stemStretchNode) measureStemStretchLatency(rate);
     }
 
+    function markStemStretchUnavailable() {
+      stemStretchAvailable = false;
+      dropStemStretchNode();
+      applyMasterPlaybackSpeed(effectivePlaybackSpeed());
+      updateSpeedUI();
+    }
+
+    // Applies a measured latency; a graph running at that rate restarts to use it.
+    function recordStemStretchLatency(rate, latency) {
+      stemStretchLatencies[rate] = latency;
+      if (stemStretchNode && stemGraphAnchor && stemGraphAnchor.rate === rate) startStemGraph();
+    }
+
+    // Only the graph engine sets an anchor, and only while its sources play.
+    function restartStemGraphIfRunning() {
+      if (stemGraphAnchor) startStemGraph();
+    }
+
     function dropStemStretchNode() {
       if (!stemStretchNode) return;
       stemStretchNode.disconnect();
@@ -5152,10 +5187,19 @@
       dropStemStretchNode();
       let output = ctx.destination;
       if (rate < 1 && stemStretchAvailable) {
-        stemStretchNode = new AudioWorkletNode(ctx, 'soundtouch-processor', { outputChannelCount: [2] });
-        stemStretchNode.parameters.get('playbackRate').value = rate;
-        stemStretchNode.connect(ctx.destination);
-        output = stemStretchNode;
+        try {
+          stemStretchNode = new AudioWorkletNode(ctx, 'soundtouch-processor', { outputChannelCount: [2] });
+          stemStretchNode.parameters.get('playbackRate').value = rate;
+          stemStretchNode.onprocessorerror = () => {
+            markStemStretchUnavailable();
+            restartStemGraphIfRunning();
+          };
+          stemStretchNode.connect(ctx.destination);
+          output = stemStretchNode;
+        } catch (error) {
+          console.warn('Stem stretcher unavailable', error);
+          markStemStretchUnavailable();
+        }
       }
       for (const name of STEM_NAMES) stemGains[name].connect(output);
     }
@@ -5226,7 +5270,7 @@
         const peak = output.reduce((max, sample) => Math.max(max, Math.abs(sample)), 0);
         const first = output.findIndex(sample => Math.abs(sample) > peak * 0.2);
         if (peak > 0 && first >= 0) {
-          stemStretchLatencies[rate] = first / sampleRate - burstAt / rate;
+          recordStemStretchLatency(rate, first / sampleRate - burstAt / rate);
         } else {
           console.warn('Stem stretch latency measurement found no signal');
         }
@@ -6461,6 +6505,7 @@
       player.addEventListener('play', stemMasterChanged);
       player.addEventListener('pause', stemMasterChanged);
       player.addEventListener('playing', stemMasterPlaying);
+      player.addEventListener('ratechange', onMasterRateChange);
       player.addEventListener('waiting', stemMasterInterrupted);
       player.addEventListener('seeking', stemMasterInterrupted);
       player.addEventListener('seeked', stemMasterSeeked);

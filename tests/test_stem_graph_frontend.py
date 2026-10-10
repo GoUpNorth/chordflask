@@ -26,6 +26,9 @@ GRAPH_FUNCTIONS = [
     'effectivePlaybackSpeed',
     'speedControlLocked',
     'graphStemsActive',
+    'markStemStretchUnavailable',
+    'recordStemStretchLatency',
+    'restartStemGraphIfRunning',
 ]
 
 
@@ -69,6 +72,10 @@ let stemStretchNode = null;
 let stemStretchLatencies = {};
 const measured = [];
 function measureStemStretchLatency(rate) { if (!(rate in stemStretchLatencies)) measured.push(rate); }
+const masterRates = [];
+function applyMasterPlaybackSpeed(rate) { masterRates.push(rate); }
+function updateSpeedUI() {}
+let failWorklet = false;
 const started = [];
 const worklets = [];
 class FakeSource {
@@ -85,6 +92,7 @@ class FakeParam {
 }
 class AudioWorkletNode {
   constructor(context, name, options) {
+    if (failWorklet) throw new Error('worklet failed');
     this.name = name; this.options = options; this.params = { playbackRate: new FakeParam() };
     this.parameters = { get: key => this.params[key] };
     worklets.push(this);

@@ -361,3 +361,95 @@ def test_grid_display_lead_is_scaled_by_speed():
         DISPLAY_LEAD,
         functions=['positionSyncDisplayLead', *SPEED_RATE_FUNCTIONS],
     )
+
+
+STRETCH_CREATE_FAILS = r'''
+playbackSpeed = 0.5;
+stemStretchAvailable = true;
+failWorklet = true;
+startStemGraph();
+assert(!stemStretchAvailable && stemStretchNode === null, 'stretcher marked unavailable');
+STEM_NAMES.forEach(name => assert(stemGains[name].output === stemAudioContext.destination, name + ' audible'));
+assert(started.length === 4 && started.every(source => source.playbackRate.value === 1), 'stems at full speed');
+assert(masterRates.at(-1) === 1, 'master locked to full speed');
+'''
+
+PROCESSOR_ERROR = r'''
+playbackSpeed = 0.5;
+stemStretchAvailable = true;
+startStemGraph();
+worklets[0].onprocessorerror();
+assert(!stemStretchAvailable, 'processor error marks the stretcher unavailable');
+assert(started.length === 8 && started.slice(4).every(source => source.playbackRate.value === 1), 'restarted');
+STEM_NAMES.forEach(name => assert(stemGains[name].output === stemAudioContext.destination, name));
+'''
+
+STOP_DROPS_STRETCHER = r'''
+playbackSpeed = 0.5;
+stemStretchAvailable = true;
+startStemGraph();
+stopStemGraphSources();
+assert(worklets[0].disconnected && stemStretchNode === null, 'no buffered tail after pause or seek');
+'''
+
+LATENCY_LANDS = r'''
+playbackSpeed = 0.5;
+stemStretchAvailable = true;
+startStemGraph();
+recordStemStretchLatency(0.7, 0.1);
+assert(started.length === 4, 'other rates do not restart');
+recordStemStretchLatency(0.5, 0.1);
+assert(started.length === 8, 'running rate restarts with the measured latency');
+near(stemGraphAnchor.latency, 0.03 + 0.1, 'measured latency applied');
+'''
+
+
+@pytest.mark.parametrize('body', [STRETCH_CREATE_FAILS, PROCESSOR_ERROR, STOP_DROPS_STRETCHER, LATENCY_LANDS],
+                         ids=['create-fails', 'processor-error', 'stop-drops-stretcher', 'latency-lands'])
+def test_graph_stretcher_lifecycle(body):
+    run_graph_script(body)
+
+
+SLIDER_RELEASE = r'''
+const calls = [];
+function startStemGraph() { calls.push('start'); }
+let stemGraphAnchor = { rate: 0.7 };
+stemsActive = true;
+stemEngine = 'graph';
+onSpeedSliderChange();
+assert(calls.length === 1, 'release realigns running graph stems');
+stemGraphAnchor = null;
+onSpeedSliderChange();
+assert(calls.length === 1, 'nothing to realign while paused');
+'''
+
+
+def test_slider_release_realigns_graph_stems():
+    run_speed_script(SLIDER_RELEASE, functions=['onSpeedSliderChange', 'restartStemGraphIfRunning'])
+
+
+NATIVE_RATE = r'''
+const video = videoPlayer;
+function retimeStemGraph() {}
+video.playbackRate = 0.6;
+onMasterRateChange({ target: video });
+assert(playbackSpeed === 0.6, 'browser speed menu becomes the app speed');
+assert(audioPlayer.playbackRate === 0.6, 'both players follow');
+video.playbackRate = 2;
+onMasterRateChange({ target: video });
+assert(playbackSpeed === 1 && video.playbackRate === 1, 'unsupported speed snaps into range');
+audioPlayer.playbackRate = 0.8;
+onMasterRateChange({ target: audioPlayer });
+assert(playbackSpeed === 1, 'inactive player is ignored');
+setPlaybackSpeed(0.7);
+stemsActive = true;
+stemEngine = 'graph';
+stemStretchAvailable = false;
+applyPlaybackSpeed();
+onMasterRateChange({ target: video });
+assert(video.playbackRate === 1 && playbackSpeed === 0.7, 'app-driven lock keeps the remembered speed');
+'''
+
+
+def test_browser_speed_menu_follows_app_speed():
+    run_speed_script(NATIVE_RATE, functions=SPEED_FUNCTIONS + ['onMasterRateChange'])
