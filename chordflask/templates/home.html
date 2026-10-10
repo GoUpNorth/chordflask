@@ -2899,9 +2899,14 @@
       chordTrackId: 'chordflask.chordTrackId',
       rhythmTrackId: 'chordflask.rhythmTrackId',
       transposeByMedia: 'chordflask.transposeByMedia',
+      speedByMedia: 'chordflask.speedByMedia',
       preferredSongView: 'chordflask.preferredSongView'
     };
 
+    const PLAYBACK_SPEED_MIN = 0.5;
+    const PLAYBACK_SPEED_MAX = 1;
+    const PLAYBACK_SPEED_STEP = 0.05;
+    let playbackSpeed = 1;
     let desiredChordTrackId = localStorage.getItem(storageKeys.chordTrackId) || '';
     let desiredRhythmTrackId = localStorage.getItem(storageKeys.rhythmTrackId) || '';
     let activeChordTrackId = '';
@@ -3700,6 +3705,68 @@
           JSON.stringify(transposeByMedia)
         );
       } catch { /* Optional preference. */ }
+    }
+
+    function readStoredObject(storageKey) {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+
+    // An undefined value drops the entry when the map is serialized.
+    function rememberForMedia(storageKey, mediaIdentity, value) {
+      if (!mediaIdentity) return;
+      const valuesByMedia = readStoredObject(storageKey);
+      valuesByMedia[mediaIdentity] = value;
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(valuesByMedia));
+      } catch { /* Optional preference. */ }
+    }
+
+    function normalizePlaybackSpeed(value) {
+      const speed = Number(value);
+      if (!Number.isFinite(speed)) return 1;
+      const clamped = Math.min(PLAYBACK_SPEED_MAX, Math.max(PLAYBACK_SPEED_MIN, speed));
+      const steps = Math.round((clamped - PLAYBACK_SPEED_MIN) / PLAYBACK_SPEED_STEP);
+      return Number((PLAYBACK_SPEED_MIN + steps * PLAYBACK_SPEED_STEP).toFixed(2));
+    }
+
+    function rememberedPlaybackSpeed(mediaIdentity) {
+      const value = readStoredObject(storageKeys.speedByMedia)[mediaIdentity];
+      return value === undefined ? 1 : normalizePlaybackSpeed(value);
+    }
+
+    // Full speed is the default, so it is not stored.
+    function rememberPlaybackSpeed(mediaIdentity, speed) {
+      rememberForMedia(storageKeys.speedByMedia, mediaIdentity, speed === 1 ? undefined : speed);
+    }
+
+    function effectivePlaybackSpeed() {
+      return playbackSpeed;
+    }
+
+    // preservesPitch keeps the key; defaultPlaybackRate survives source changes.
+    function applyMasterPlaybackSpeed(rate) {
+      for (const player of [videoPlayer, audioPlayer]) {
+        player.preservesPitch = true;
+        player.defaultPlaybackRate = rate;
+        player.playbackRate = rate;
+      }
+    }
+
+    function applyPlaybackSpeed() {
+      applyMasterPlaybackSpeed(effectivePlaybackSpeed());
+    }
+
+    function setPlaybackSpeed(value) {
+      const speed = normalizePlaybackSpeed(value);
+      if (speed === playbackSpeed) return;
+      playbackSpeed = speed;
+      rememberPlaybackSpeed(loadedMediaIdentity, playbackSpeed);
+      applyPlaybackSpeed();
     }
 
     function pathBasename(path) {
@@ -5307,6 +5374,8 @@
         callbackOutput.innerText = '';
         invalidatePlaybackFallbackGeneration();
         selectMediaPlayer(data.media_kind, filename);
+        playbackSpeed = rememberedPlaybackSpeed(requestedPath);
+        applyPlaybackSpeed();
         video.src = '/video?' + new Date().getTime();
         video.load();
         pageTitle.innerText = data.title;

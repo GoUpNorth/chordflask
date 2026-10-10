@@ -80,14 +80,16 @@ for (const name of STEM_NAMES) {
 ''' + functions + '\n' + body
 
 
-def run_graph_script(body):
+def run_node(script):
     node = shutil.which('node')
     if not node:
         pytest.skip('Node is unavailable')
-    result = subprocess.run(
-        [node, '-e', graph_script(body)], capture_output=True, text=True, timeout=10
-    )
+    result = subprocess.run([node, '-e', script], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def run_graph_script(body):
+    run_node(graph_script(body))
 
 
 START_ALIGNMENT = r'''
